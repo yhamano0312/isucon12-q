@@ -16,7 +16,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -48,9 +47,6 @@ var (
 
 	sqliteDriverName = "sqlite3"
 )
-
-var retrievePlayerMutex sync.Mutex
-var retrievePlayerCache map[string]PlayerRow
 
 // 環境変数を取得する、なければデフォルト値を返す
 func getEnv(key string, defaultValue string) string {
@@ -194,8 +190,6 @@ func Run() {
 	adminDB.SetMaxIdleConns(512)
 	adminDB.SetMaxOpenConns(512)
 	defer adminDB.Close()
-
-	retrievePlayerCache = make(map[string]PlayerRow)
 
 	port := getEnv("SERVER_APP_PORT", "3000")
 	e.Logger.Infof("starting isuports server on : %s ...", port)
@@ -373,29 +367,18 @@ type PlayerRow struct {
 }
 
 // 参加者を取得する
-func retrievePlayer(ctx context.Context, tenantDB dbOrTx, tenantId int64, id string) (*PlayerRow, error) {
+func retrievePlayer(ctx context.Context, tenantDB dbOrTx, id string) (*PlayerRow, error) {
 	var p PlayerRow
-	retrievePlayerMutex.Lock()
-	v, ok := retrievePlayerCache[strconv.FormatInt(tenantId, 10) + ":" + id]
-	retrievePlayerMutex.Unlock()
-	if ok {
-		p = v
-	} else {
-		if err := tenantDB.GetContext(ctx, &p, "SELECT * FROM player WHERE id = ?", id); err != nil {
-			return nil, fmt.Errorf("error Select player: id=%s, %w", id, err)
-		}
-		retrievePlayerMutex.Lock()
-		retrievePlayerCache[strconv.FormatInt(tenantId, 10) + ":" + id] = p
-		retrievePlayerMutex.Unlock()
-
+	if err := tenantDB.GetContext(ctx, &p, "SELECT * FROM player WHERE id = ?", id); err != nil {
+		return nil, fmt.Errorf("error Select player: id=%s, %w", id, err)
 	}
 	return &p, nil
 }
 
 // 参加者を認可する
 // 参加者向けAPIで呼ばれる
-func authorizePlayer(ctx context.Context, tenantDB dbOrTx, tenantId int64, id string) error {
-	player, err := retrievePlayer(ctx, tenantDB, tenantId, id)
+func authorizePlayer(ctx context.Context, tenantDB dbOrTx, id string) error {
+	player, err := retrievePlayer(ctx, tenantDB, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return echo.NewHTTPError(http.StatusUnauthorized, "player not found")
@@ -825,7 +808,7 @@ func playersAddHandler(c echo.Context) error {
 				id, displayName, false, now, now, err,
 			)
 		}
-		p, err := retrievePlayer(ctx, tenantDB, v.tenantID, id)
+		p, err := retrievePlayer(ctx, tenantDB, id)
 		if err != nil {
 			return fmt.Errorf("error retrievePlayer: %w", err)
 		}
@@ -877,9 +860,7 @@ func playerDisqualifiedHandler(c echo.Context) error {
 			true, now, playerID, err,
 		)
 	}
-	retrievePlayerMutex.Lock()
-	delete(retrievePlayerCache, strconv.FormatInt(v.tenantID, 10) + ":" + playerID)
-	p, err := retrievePlayer(ctx, tenantDB, v.tenantID, playerID)
+	p, err := retrievePlayer(ctx, tenantDB, playerID)
 	if err != nil {
 		// 存在しないプレイヤー
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1082,7 +1063,7 @@ func competitionScoreHandler(c echo.Context) error {
 			return fmt.Errorf("row must have two columns: %#v", row)
 		}
 		playerID, scoreStr := row[0], row[1]
-		if _, err := retrievePlayer(ctx, tenantDB, v.tenantID, playerID); err != nil {
+		if _, err := retrievePlayer(ctx, tenantDB, playerID); err != nil {
 			// 存在しない参加者が含まれている
 			if errors.Is(err, sql.ErrNoRows) {
 				return echo.NewHTTPError(
@@ -1220,7 +1201,7 @@ func playerHandler(c echo.Context) error {
 	}
 	defer tenantDB.Close()
 
-	if err := authorizePlayer(ctx, tenantDB, v.tenantID, v.playerID); err != nil {
+	if err := authorizePlayer(ctx, tenantDB, v.playerID); err != nil {
 		return err
 	}
 
@@ -1228,7 +1209,7 @@ func playerHandler(c echo.Context) error {
 	if playerID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "player_id is required")
 	}
-	p, err := retrievePlayer(ctx, tenantDB, v.tenantID, playerID)
+	p, err := retrievePlayer(ctx, tenantDB, playerID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return echo.NewHTTPError(http.StatusNotFound, "player not found")
@@ -1330,7 +1311,7 @@ func competitionRankingHandler(c echo.Context) error {
 	}
 	defer tenantDB.Close()
 
-	if err := authorizePlayer(ctx, tenantDB, v.tenantID, v.playerID); err != nil {
+	if err := authorizePlayer(ctx, tenantDB, v.playerID); err != nil {
 		return err
 	}
 
@@ -1398,7 +1379,7 @@ func competitionRankingHandler(c echo.Context) error {
 			continue
 		}
 		scoredPlayerSet[ps.PlayerID] = struct{}{}
-		p, err := retrievePlayer(ctx, tenantDB, v.tenantID, ps.PlayerID)
+		p, err := retrievePlayer(ctx, tenantDB, ps.PlayerID)
 		if err != nil {
 			return fmt.Errorf("error retrievePlayer: %w", err)
 		}
@@ -1469,7 +1450,7 @@ func playerCompetitionsHandler(c echo.Context) error {
 	}
 	defer tenantDB.Close()
 
-	if err := authorizePlayer(ctx, tenantDB, v.tenantID, v.playerID); err != nil {
+	if err := authorizePlayer(ctx, tenantDB, v.playerID); err != nil {
 		return err
 	}
 	return competitionsHandler(c, v, tenantDB)
@@ -1583,7 +1564,7 @@ func meHandler(c echo.Context) error {
 		return fmt.Errorf("error connectToTenantDB: %w", err)
 	}
 	ctx := context.Background()
-	p, err := retrievePlayer(ctx, tenantDB, v.tenantID, v.playerID)
+	p, err := retrievePlayer(ctx, tenantDB, v.playerID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return c.JSON(http.StatusOK, SuccessResult{
@@ -1630,8 +1611,5 @@ func initializeHandler(c echo.Context) error {
 	res := InitializeHandlerResult{
 		Lang: "go",
 	}
-
-	retrievePlayerCache = make(map[string]PlayerRow)
-
 	return c.JSON(http.StatusOK, SuccessResult{Status: true, Data: res})
 }
