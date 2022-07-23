@@ -49,6 +49,9 @@ type sqlTraceLog struct {
 	Args         []interface{} `json:"args"`
 	QueryTime    float64       `json:"query_time"`
 	AffectedRows int64         `json:"affected_rows"`
+	Method       string        `json:"method"`
+	Status       int           `json:"status"`
+	BodyBytes    int           `json:"body_bytes"`
 }
 
 func traceLogPostExec(_ context.Context, ctx interface{}, stmt *proxy.Stmt, args []driver.NamedValue, result driver.Result, _ error) error {
@@ -77,6 +80,9 @@ func traceLogPostExec(_ context.Context, ctx interface{}, stmt *proxy.Stmt, args
 		Args:         argsValues,
 		QueryTime:    queryTime.Seconds(),
 		AffectedRows: affected,
+		Method: "GET",
+		Status: 200,
+		BodyBytes: 0,
 	}
 	if err := traceLogEncoder.Encode(log); err != nil {
 		return fmt.Errorf("error encode.Encode at traceLogPostExec: %w", err)
@@ -101,6 +107,10 @@ func traceLogPostQuery(_ context.Context, ctx interface{}, stmt *proxy.Stmt, arg
 		Args:         argsValues,
 		QueryTime:    queryTime.Seconds(),
 		AffectedRows: 0,
+		Method: "GET",
+		Status: 200,
+		BodyBytes: 0,
+
 	}
 	if err := traceLogEncoder.Encode(log); err != nil {
 		return fmt.Errorf("error encode.Encode at traceLogPostQuery: %w", err)
