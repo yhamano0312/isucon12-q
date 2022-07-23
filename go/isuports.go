@@ -661,7 +661,7 @@ func tenantsBillingHandler(c echo.Context) error {
 	//   を合計したものを
 	// テナントの課金とする
 	ts := []TenantRow{}
-	if err := adminDB.SelectContext(ctx, &ts, "SELECT * FROM tenant ORDER BY id DESC"); err != nil {
+	if err := adminDB.SelectContext(ctx, &ts, "SELECT `id`, `name`, `display_name` FROM tenant ORDER BY id DESC"); err != nil {
 		return fmt.Errorf("error Select tenant: %w", err)
 	}
 	tenantBillings := make([]TenantWithBilling, 0, len(ts))
@@ -684,7 +684,7 @@ func tenantsBillingHandler(c echo.Context) error {
 			if err := tenantDB.SelectContext(
 				ctx,
 				&cs,
-				"SELECT * FROM competition WHERE tenant_id=?",
+				"SELECT id FROM competition WHERE tenant_id=?",
 				t.ID,
 			); err != nil {
 				return fmt.Errorf("failed to Select competition: %w", err)
@@ -746,7 +746,7 @@ func playersListHandler(c echo.Context) error {
 	if err := tenantDB.SelectContext(
 		ctx,
 		&pls,
-		"SELECT * FROM player WHERE tenant_id=? ORDER BY created_at DESC",
+		"SELECT `id`, `display_name`, `is_disqualified` FROM player WHERE tenant_id=? ORDER BY created_at DESC",
 		v.tenantID,
 	); err != nil {
 		return fmt.Errorf("error Select player: %w", err)
@@ -1109,7 +1109,7 @@ func competitionScoreHandler(c echo.Context) error {
 	); err != nil {
 		return fmt.Errorf("error Delete player_score: tenantID=%d, competitionID=%s, %w", v.tenantID, competitionID, err)
 	}
-	
+
 	if _, err := tenantDB.NamedExecContext(
 		ctx,
 		"INSERT INTO player_score (id, tenant_id, player_id, competition_id, score, row_num, created_at, updated_at) VALUES (:id, :tenant_id, :player_id, :competition_id, :score, :row_num, :created_at, :updated_at)",
@@ -1152,7 +1152,7 @@ func billingHandler(c echo.Context) error {
 	if err := tenantDB.SelectContext(
 		ctx,
 		&cs,
-		"SELECT * FROM competition WHERE tenant_id=? ORDER BY created_at DESC",
+		"SELECT id FROM competition WHERE tenant_id=? ORDER BY created_at DESC",
 		v.tenantID,
 	); err != nil {
 		return fmt.Errorf("error Select competition: %w", err)
@@ -1224,7 +1224,7 @@ func playerHandler(c echo.Context) error {
 	if err := tenantDB.SelectContext(
 		ctx,
 		&cs,
-		"SELECT * FROM competition WHERE tenant_id = ? ORDER BY created_at ASC",
+		"SELECT id FROM competition WHERE tenant_id = ? ORDER BY created_at ASC",
 		v.tenantID,
 	); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("error Select competition: %w", err)
@@ -1243,7 +1243,7 @@ func playerHandler(c echo.Context) error {
 			ctx,
 			&ps,
 			// 最後にCSVに登場したスコアを採用する = row_numが一番大きいもの
-			"SELECT * FROM player_score WHERE tenant_id = ? AND competition_id = ? AND player_id = ? ORDER BY row_num DESC LIMIT 1",
+			"SELECT `competition_id`, `score`  FROM player_score WHERE tenant_id = ? AND competition_id = ? AND player_id = ? ORDER BY row_num DESC LIMIT 1",
 			v.tenantID,
 			c.ID,
 			p.ID,
@@ -1368,7 +1368,7 @@ func competitionRankingHandler(c echo.Context) error {
 	if err := tenantDB.SelectContext(
 		ctx,
 		&pss,
-		"SELECT * FROM player_score WHERE tenant_id = ? AND competition_id = ? ORDER BY row_num DESC",
+		"SELECT `player_id`, `score`, `row_num` FROM player_score WHERE tenant_id = ? AND competition_id = ? ORDER BY row_num DESC",
 		tenant.ID,
 		competitionID,
 	); err != nil {
@@ -1488,7 +1488,7 @@ func competitionsHandler(c echo.Context, v *Viewer, tenantDB dbOrTx) error {
 	if err := tenantDB.SelectContext(
 		ctx,
 		&cs,
-		"SELECT * FROM competition WHERE tenant_id=? ORDER BY created_at DESC",
+		"SELECT `id`, `title`, `finished_at` FROM competition WHERE tenant_id=? ORDER BY created_at DESC",
 		v.tenantID,
 	); err != nil {
 		return fmt.Errorf("error Select competition: %w", err)
